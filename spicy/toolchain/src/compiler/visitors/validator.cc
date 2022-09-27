@@ -13,6 +13,7 @@
 #include <hilti/ast/expressions/type.h>
 #include <hilti/ast/operators/reference.h>
 #include <hilti/ast/statements/switch.h>
+#include <hilti/ast/type.h>
 #include <hilti/ast/types/stream.h>
 #include <hilti/base/logger.h>
 #include <hilti/base/result.h>
@@ -117,7 +118,7 @@ hilti::Result<hilti::Nothing> isParseableType(const Type& pt, const type::unit::
         return hilti::Nothing();
 
     if ( const auto& x = pt.tryAs<type::ValueReference>() ) {
-        const auto& dt = x->dereferencedType();
+        const auto& dt = *x->dereferencedType();
 
         if ( auto rc = isParseableType(dt, f); ! rc )
             return rc;
@@ -147,7 +148,7 @@ hilti::Result<hilti::Nothing> isParseableType(const Type& pt, const type::unit::
     }
 
     else if ( const auto& x = pt.tryAs<type::Vector>() ) {
-        if ( auto rc = isParseableType(x->elementType(), f); ! rc )
+        if ( auto rc = isParseableType(*x->elementType(), f); ! rc )
             return rc;
 
         return hilti::Nothing();
@@ -205,7 +206,11 @@ struct VisitorBase {
 
 struct VisitorPre : public hilti::visitor::PreOrder<void, VisitorPre>, public VisitorBase {};
 
-struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>, public VisitorBase {
+struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>,
+                     public VisitorBase,
+                     public hilti::type::Visitor {
+    using position_t = hilti::visitor::PreOrder<void, VisitorPost>::position_t;
+
     template<typename GlobalOrLocalVariable>
     void checkVariable(const GlobalOrLocalVariable& n, position_t p) {
         // A variable initialized from a struct initializer always needs an explicit type.
@@ -570,7 +575,7 @@ struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>, public 
         }
     }
 
-    void operator()(const spicy::type::Unit& u, position_t p) {
+    void operator()(const spicy::type::Unit& u, hilti::type::Visitor::position_t& p) override {
         if ( auto attrs = u.attributes() ) {
             if ( AttributeSet::find(attrs, "&size") && AttributeSet::find(attrs, "&max-size") )
                 error(("attributes cannot be combined: &size, &max-size"), p);
@@ -633,25 +638,25 @@ struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>, public 
 
     void operator()(const hilti::operator_::value_reference::Equal& o, position_t p) {
         if ( auto ref = o.op0().type().tryAs<hilti::type::ValueReference>();
-             ref && ref->dereferencedType().isA<type::Unit>() )
+             ref && ref->dereferencedType()->isA<type::Unit>() )
             error("units cannot be compared with ==", p);
     }
 
     void operator()(const hilti::operator_::value_reference::Unequal& o, position_t p) {
         if ( auto ref = o.op0().type().tryAs<hilti::type::ValueReference>();
-             ref && ref->dereferencedType().isA<type::Unit>() )
+             ref && ref->dereferencedType()->isA<type::Unit>() )
             error("units cannot be compared with !=", p);
     }
 
     void operator()(const hilti::operator_::strong_reference::Equal& o, position_t p) {
         if ( auto ref = o.op0().type().tryAs<hilti::type::ValueReference>();
-             ref && ref->dereferencedType().isA<type::Unit>() )
+             ref && ref->dereferencedType()->isA<type::Unit>() )
             error("units cannot be compared with ==", p);
     }
 
     void operator()(const hilti::operator_::strong_reference::Unequal& o, position_t p) {
         if ( auto ref = o.op0().type().tryAs<hilti::type::ValueReference>();
-             ref && ref->dereferencedType().isA<type::Unit>() )
+             ref && ref->dereferencedType()->isA<type::Unit>() )
             error("units cannot be compared with !=", p);
     }
 
@@ -887,7 +892,7 @@ struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>, public 
 
     void operator()(const operator_::unit::ConnectFilter& n, position_t p) {
         if ( const auto& y =
-                 methodArgument(n, 0).type().as<type::StrongReference>().dereferencedType().as<type::Unit>();
+                 methodArgument(n, 0).type().as<type::StrongReference>().dereferencedType()->as<type::Unit>();
              ! y.isFilter() )
             error("unit type cannot be a filter, %filter missing", p);
     }
@@ -912,7 +917,7 @@ struct VisitorPost : public hilti::visitor::PreOrder<void, VisitorPost>, public 
             error("unit type cannot be a filter, %filter missing", p);
     }
 
-    void operator()(const spicy::type::Bitfield& b, position_t p) {
+    void operator()(const spicy::type::Bitfield& b, hilti::type::Visitor::position_t& p) override {
         const auto width = b.width();
 
         for ( const auto& bit : b.bits() ) {
